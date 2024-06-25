@@ -1,0 +1,453 @@
+---
+title: "Covid-19 Data" 
+author: "Tina L." 
+date: "2024-06-23"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project File 
+This report will analyze the COVID-19 Data by the Center for
+Systems Science and Engineering (CSSE) at Johns Hopkins University. More information about the data can be found on
+<https://github.com/CSSEGISandData/COVID-19>.
+This project file follows the tutorial of the week 3 module of the course Data Science as a field. It explains the steps that Dr.Jane Wall took to analyze the COVID-19 data sets. It includes some additional data visualization as well.
+
+This report will look at the global and US COVID-19 cases, which comes in 4 csv files:\
+- "time_series_covid19_confirmed_global.csv",\
+- "time_series_covid19_deaths_global.csv",\
+- "time_series_covid19_confirmed_US.csv",\
+- "time_series_covid19_deaths_US.csv"
+
+The purpose of this project file is to go over the data process flow of analyzing a data file in R.
+
+## Importing Data 
+Load the tidyverse and lubridate libraries and read in the
+data from the four csv files. We will load the library tidyverse which is an R package that helps to transform and tidy data. And we will also load the library lubridate as we will use it to convert date to a character vector to a date object.
+
+```{r Import Data}
+library(tidyverse)
+library(lubridate)
+
+#get current data in the four files
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <-
+c("time_series_covid19_confirmed_global.csv",
+  "time_series_covid19_deaths_global.csv",
+  "time_series_covid19_confirmed_US.csv",
+  "time_series_covid19_deaths_US.csv"
+  )
+
+urls <- str_c(url_in,file_names)
+```
+
+After loading the data, take a look at what are in these data sets.
+
+```{r Load Data}
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+US_cases <- read_csv(urls[3])
+US_deaths <- read_csv(urls[4])
+```
+
+## Tidying and Transforming Data 
+After looking at global_cases and global_deaths, tidy the data sets and put each variable (date, cases, deaths) in their own column. We can exclude columns such as Lat and Long from the analysis and
+rename Region and State to be more R-friendly.
+
+```{r tidy_global_cases}
+global_cases <- global_cases %>%
+  pivot_longer(cols=
+-c('Province/State',
+'Country/Region', Lat, Long),
+                 names_to = "date",
+                 values_to = "cases")%>%
+  select(-c(Lat,Long))
+```
+```{r tidy_global_deaths}
+global_deaths <- global_deaths %>%
+  pivot_longer(cols=
+-c('Province/State',
+'Country/Region', Lat, Long),
+                 names_to = "date",
+                 values_to = "deaths")%>%
+  select(-c(Lat,Long))
+```
+```{r tidy_global}
+global <- global_cases %>%
+  full_join(global_deaths) %>%
+  rename (Country_Region = 'Country/Region',
+          Province_State = 'Province/State') %>%
+  mutate(date = mdy(date))
+```
+```{r filter positive}
+summary(global)
+#keep only where the cases are positive
+global <- global %>% filter(cases>0)
+summary(global)
+```
+
+The smallest number of cases is 1. We may also be concerned about whether the maximum is a valid or if it is an outlier. Let's check if it is valid.
+
+```{r filter cases}
+global %>% filter(cases > 28000000)
+```
+
+As the results show, these number of cases for Brazil from February the 18th of 2022 and onward and so the data looks correct. Next let's check if the data of the US cases are valid.
+
+```{r view table}
+US_cases
+```
+We have codes such as UID, iso2, iso3, code 3, FIPS, and Admin2, country, region, Lat, Long. There are some columns that are not needed. The codes does not bring value, so we can exclude these columns. Let's pivot all the dates and keep the columns Admin2 through the number of cases.
+
+```{r pivot longer}
+US_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases")
+```
+
+When we run the code above, we can see that now we have is Lat, Long, date, cases. We have this Combined_key and then we are going to select from Admin2 through cases, leave out the lat, long. Notice that date is a character vector instead of a date object.
+
+```{r pivot longer US_cases}
+US_cases <- US_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key),
+               names_to = "date",
+               values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+US_cases
+```
+It appears that Admin2 is the county name. Combined_Key puts together the county and the state. Next, let's look at the US deaths in the same manner. We cannot always assume that they're going to be in the same format.
+```{r pivot longer US_deaths}
+US_deaths <- US_deaths %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+US_deaths
+```
+
+US_deaths looks similar to what we had for US_cases, except it has a column for population. To get the population, join US_cases and US_deaths together to have a data set that has everything in it.
+
+```{r Join US_cases with US_deaths}
+US <- US_cases %>%
+  full_join(US_deaths)
+#Joining, by = c("Admin2","Province_State", "Country_Region", "Combined_Key","date")
+US
+```
+
+Global does not have population data. Population data needs to be added to our global data set if we're going to do a comparative analysis between the countries. Let's add a population data and a variable called Combined_Key that combine these two things the province_state in the country_region together, so that we have a similar sort of data set.
+
+```{r unite}
+global <- global %>%
+  unite("Combined_Key",
+        c(Province_State, Country_Region),
+        sep = ", ",
+        na.rm = TRUE,
+        remove = FALSE)
+```
+
+Use unite, which will combine together province_state, country_region. It will combine it with a comma and a space and put it in Combined_key in the global data set. If we look at the global data set, it should have the same variables other than population. The same Johns Hopkins website has a csv with population data.
+
+```{r uid_lookup}
+uid_lookup_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+
+uid <- read_csv(uid_lookup_url) %>%
+  select(-c(Lat,Long_, Combined_Key, code3, iso2, iso3, Admin2))
+#you see its going to have the population for these different countries.
+
+global <- global %>%
+  left_join(uid, by = c("Province_State", "Country_Region")) %>%
+  select(-c(UID,FIPS)) %>%
+  select(Province_State, Country_Region, date, cases, deaths, Population, Combined_Key)
+global
+#now each country i have added the population to that data set
+```
+
+## Visualizing and Analyzing Data 
+With COVID data set, there is a lot of different analysis that we could do. For this project, we are going to focus on just analyzing the US as a whole and for a given state to see what things we might want to do. 
+
+We will start with looking at US by state, group it by the state, and by the region and by the date. Then we are going to summarize each state. We are going to sum the cases, and the deaths. The population is going to be the sum of the population of the counties. Then we will mutate, which means we are going to add a column, where we are going to compute the deaths per million. We are going to compute that as the deaths divided by the population, then we will select those features that we worked to look at.
+
+```{r summarize US_by_state}
+US_by_state <- US %>%
+  group_by(Province_State, Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths),
+      Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths *1000000 / Population) %>%
+  select(Province_State, Country_Region, date,
+    cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+```
+
+Now what we have, is for each state, and each date in that state, we have the number of cases and the number of deaths. We also have the deaths per million and the population. We would want to look at what the population is.
+
+```{r US_by_state}
+US_by_state
+```
+
+Now we are going to look at the total for the US. In order to do that, we are going to look at this US by State. Now we want to group it by the country region. We are going to group it by the US and by the date. For each date, we want the number of cases, the number of deaths, and the sum of the population. We are going to look at the same thing for the US totals.
+
+```{r summarize US_totals}
+US_totals <- US_by_state %>%
+  group_by(Country_Region, date) %>%
+  summarize(cases = sum(cases), deaths = sum(deaths),
+      Population = sum(Population)) %>%
+  mutate(deaths_per_mill = deaths *1000000 / Population) %>%
+  select(Country_Region, date,
+    cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+US_totals
+```
+
+Now we have the population for the US. Since this is all starting with zeros of terms of deaths, but it starts with the cases studied. Let's look at the end of this. Just to be sure what we're getting here.
+
+```{r tail}
+tail(US_totals)
+```
+
+Now we're seeing the cases much higher, the deaths much higher, and the deaths per million being around 3371, for the US. Let's visualize some of this data. In order to visualize this, we are going to take out of this US totals. We are going to just take the cases where there were some cases. We are going to filter where there were some cases. We are going to make X be the date and Y be the number of cases. We will add a line, and points to the graph. Then we are going to do the same thing, but going to also add deaths to the same graph. So we don't lose all the details in it, we are going to scale the y-variable and a log scale.
+
+```{r plot US_totals}
+US_totals %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color= "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y= deaths, color = "deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID19 in US", y = NULL)
+```
+
+This is the number of cases in whatever this color is, orange color and deaths in a turquoise. This gives us a visualization, of the total number of cases and deaths in the United States, from the start of the reporting of the COVID. Now we can do the same thing, and choose a state that we would like to look at. We just choose the state of New York. We will filter and take only that states where the province state is equal to the state of New York. Then we will do the same plot here.
+
+```{r plot US_by_state, warning=FALSE}
+state <- "New York"
+US_by_state %>%
+  filter(Province_State == state) %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color= "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y= deaths, color = "deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+```
+
+```{r plot US_by_state Florida, warning=FALSE}
+state <- "Florida"
+US_by_state %>%
+  filter(Province_State == state) %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color= "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y= deaths, color = "deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+```
+
+We can see the COVID-19 and New York and Florida cases and can see what that growth has looked like, over time. These visualizations lead us to some questions. Let's check what is the total maximum deaths for US and global. The fact that US_totals and global has the same max date and deaths shows that US is the leading country with the most covid deaths.
+
+```{r max value}
+max(US_totals$date)
+max(US_totals$deaths)
+
+max(global$date)
+max(global$deaths)
+```
+
+On our graph, it looks like the COVID cases have leveled off. Is that true? This visualization leads us to questions, which is going to take us back to do more of our transforming of our data, and then visualizing that. Now that we've done the basic visualization, before we do any modeling, this has raised questions about is the number of the number of new cases basically flat? Basically there are no new cases, because things have leveled off. Well, in order to analyze this, we are going to add our data, what we're going to do is we will transform our data again, and what we will do is we will add new variables. We will call new cases to be the cases minus the lag of cases and new death. So we will add these two columns to our data sets.
+
+```{r add columns}
+US_by_state <- US_by_state %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+US_totals <- US_totals %>%
+  mutate(new_cases = cases - lag(cases),
+         new_deaths = deaths - lag(deaths))
+```
+
+Let's look at the US totals and let's look at the tail of that.
+
+```{r tail US_totals}
+tail(US_totals)
+```
+
+We want to see the new cases and the new deaths and then everything else. Now we can see the new cases or the new deaths per day in the US as well. Now that we got those variables added in, let's look at the US first and see what this does.
+
+```{r tail US_totals select}
+tail(US_totals %>% select (new_cases, new_deaths, everything()))
+```
+
+Now we are going to look at the US and we are going to graph the new cases and the new deaths.
+
+```{r ggplot US_totals, warning=FALSE}
+US_totals %>%
+  ggplot(aes(x = date, y = new_cases)) +
+  geom_line(aes(color= "new_cases")) +
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color = "new_deaths")) +
+  geom_point(aes(y= new_deaths, color = "new_deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = "COVID19 in US", y = NULL)
+```
+
+It still seems we still have the same number of new cases per day and the number of new deaths per day. But it has flattened out. It is still up a little bit over what it was before. But we can see where the cases are. When we've lived through this COVID-19 crisis, the media and everyone started by looking at the total number of cases. But quickly that lost its ability to communicate anything to us because we were even looking at an exponential graph or if we're looking at a log scale which is flattened out. We wanted to look at the new cases per day and try to see what those were doing. We can do the same thing now for the state of New York, and let's see what's happening in New York. If we look at New York, we can see, it had a nice dip down, but then it came back up. It's currently seems to be tailing back off, but it's still reasonably high. This is the way we transform our data and then visualize it again, and we can go through this process over and over as this process will bring up different questions for us to look at. One of the things we may want to know is, what are the worst and best states and how do we measure this? Should we look at the total cases or the death rates per 1,000 people? We want to do a little more analysis.
+
+```{r ggplot US_by_state, warning=FALSE}
+state <- "New York"
+US_by_state %>%
+  filter(Province_State == state) %>%
+  ggplot(aes(x = date, y = new_cases)) +
+  geom_line(aes(color= "new_cases")) +
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color = "new_deaths")) +
+  geom_point(aes(y= new_deaths, color = "new_deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+```
+
+```{r ggplot US_by_state Florida, warning=FALSE}
+state <- "Florida"
+US_by_state %>%
+  filter(Province_State == state) %>%
+  ggplot(aes(x = date, y = new_cases)) +
+  geom_line(aes(color= "new_cases")) +
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color = "new_deaths")) +
+  geom_point(aes(y= new_deaths, color = "new_deaths")) +
+  scale_y_log10() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90)) +
+  labs(title = str_c("COVID19 in ", state), y = NULL)
+```
+
+Now we'll transform on data once again to group by state and then within that, we will chose the maximum deaths, the maximum cases for the state, and then the population for the state, and compute the deaths per 1,000 and the cases we 1,000 and then we are going to filter out where the cases are bigger than zero and the population is bigger than zero.
+
+```{r summarize US_state_totals}
+US_state_totals <- US_by_state %>%
+  group_by(Province_State) %>%
+  summarize(deaths = max(deaths), cases = max(cases),
+            population = max(Population),
+            cases_per_thou = 1000*cases/population,
+            deaths_per_thou = 1000* deaths/population) %>%
+  filter(cases > 0, population >0)
+```
+
+Now we can take what we have in US state totals. We will use a verb called slice min, which will tell us the states with the smallest deaths per 1,000. These are the deaths per 1,000.
+
+```{r US_totals slice_min}
+US_state_totals %>%
+  slice_min(deaths_per_thou, n = 10)
+```
+
+Let's see if we can get it to where that is a little bit where we can actually see what those are. Let's select deaths per 1,000 cases per 1,000. Now we just dropped off the population.
+
+```{r US_state_totals slice_min}
+US_state_totals %>%
+  slice_min(deaths_per_thou, n = 10) %>%
+select(deaths_per_thou, cases_per_thou, everything())
+```
+
+We can see now the deaths per 1,000 rates and the cases per 1,000 rates and this states that have the lowest deaths per 1,000 rate. We can also look at the worst cases. Which are the worst states?
+
+```{r US_state_totals}
+US_state_totals %>%
+  slice_max(deaths_per_thou, n = 10) %>%
+select(deaths_per_thou, cases_per_thou, everything())
+```
+
+Now we can see which states fair to be the worst of all the states so far in terms of their deaths per 1,000 people due to COVID. This just is a different way to analyze the data. There's a lot of different ways we could look at the data. It's important to remember that as we do this analysis, we should always be asking the questions. Are the deaths reported the same in all of these places? Do we trust the data that we are looking at? Just because we got a set of numbers does not mean we can use it without thinking about where the data came from, how we was reported and how valid it is.
+
+We can also graph a bar chart to analyze the number of cases by year using the US and global dataset. We can see that in there is a slight increase every year from 2020 to 2021 to 2022 and there is a large drop in 2023. 
+```{r US_by_state bar graph}
+US_totals$year <- year(US_totals$date)
+
+US_totals %>%
+  ggplot(aes(x =year)) +
+  geom_bar() + 
+  labs(title = "Bar Graph of COVID 19 in US by year")
+
+global$year <- year(global$date)
+
+global %>%
+     ggplot(aes(x =year)) +
+     geom_bar() + 
+     labs(title = "Bar Graph of COVID 19 cases globally by year")
+
+```
+
+## Modeling the Data 
+This is part of the iterative process that data scientists will go
+while analyzing data. We may need to introduce more variables here to build a model, depending on what we have found out so far. What do we want to consider? Do we want to consider population density, extent of the lock down, political affiliation, climate of the area? There's all sort of things that we may want to introduce and add as a variables into the model. And when we determine the factors we want to try, add that data to the data set and then visualize and model, and see if the variable has a statistically significant effect. Now for the purpose of our demonstration, we are going to choose a very simple
+that that we don't have to add any variables to our data for. So we are just going to look at a linear model. So a linear model means the variable we want to look at is predicted by other variables in a linear fashion. So for instance, here we are going to look at the deaths per 1,000 being a function of the cases per 1,000 and see what we get out of that model. By looking at the summary of that model, we can see the coefficients and the p-values and so forth. So basically, what this is telling us is that, this model would say the deaths per 1,000 are 0.1589 plus 0.015 times the number of cases per 1,000.
+
+```{r linear model}
+mod <- lm(deaths_per_thou ~ cases_per_thou, data = US_state_totals)
+```
+
+Let's look at how many cases per 1,000 are the smallest and how many are the largest.
+
+```{r slice_min and slice_max}
+US_state_totals %>% slice_min(cases_per_thou)
+US_state_totals %>% slice_max(cases_per_thou)
+```
+
+So we can see the cases per 1,000 go from 2.6 to 131.
+
+```{r pred}
+US_state_totals %>% mutate(pred = predict(mod))
+```
+
+Now the prediction is going to be added in as the variable pred. We want to make that part of the data set. So, let's make a new data set where we call it US total with predictions, where we adding those together. So we can look at that and see, that we in fact have the deaths per 1,000 and the predictions.
+
+```{r prediction}
+US_tot_w_pred <- US_state_totals %>% mutate(pred = predict(mod))
+US_tot_w_pred
+```
+So now let's take that data set and let's plot both the actuals and the predictions to see how well we're doing. So we will feed that into ggplot and then we will add in points for both the, let's add points for the real cases. So x is cases per 1,000 and y is deaths per 1,000, we'll make those blue. And then let's add in our predictions in red and see how that does.
+
+```{r US_tot_w_pred}
+US_tot_w_pred %>% ggplot() +
+  geom_point(aes(x=cases_per_thou, y = deaths_per_thou), color = "blue") +
+  geom_point(aes(x=cases_per_thou, y = pred), color= "red")
+```
+
+Here is the predictions. It's linear and here were the actual. So we can see the model does a reasonably good job of predicting at the lower end and maybe again at the higher end. And in between, it's sort of all over the place. So, there are probably other factors that we want to consider as part of the prediction. Although, clearly, cases per 1,000 is an indicator of the number of deaths per 1,000. But why do some places have more cases and fewer deaths. So modeling, this is just a very simple example of a model that you can do with your data. But this will lead you to other questions. Like what are these points here that have the large residuals? And what's going on in those cases versus the cases that we have already modeled. So this begins the iterative process of then going in and analyzing what's going on those points. What other variables have we not considered as part of my model that we may want to consider? So this is sort of a cyclical process of the data science analysis.
+
+## Bias Identification 
+Where does bias come into your data science process? well there's all sorts of bias sources, and they begin at the very beginning of your data science process. Your bias sources even start with the topic you choose to work on, For example your interest and feeling about the topic. They even extend to what are the variables you measure? For the COVID analysis, we are looking at cases, total cases and total deaths.
+
+1. Selection Bias \
+Only COVID cases that are reported are recorded in data set. Many people have COVID and quarantine at home or died from COVID, but not report it. Since these cases and deaths that are not in this data and analysis, leading to possible skewed results.
+
+2. Reporting Bias \
+Some states may intentionally unrepresented the number of COVID cases they have due to being prideful that they have the COVID cases under control.
+
+3. Measurement Bias \
+There can be incorrect recording of number of COVID cases, deaths, and the number population.
+
+4. Detection Bias \
+When reporting the incidents, there can be detection bias, such as misidentifying where one has COVID or not. 
+
+## Conclusion
+In summary, to analyze the COVID-19 data by the Center for Systems Science and Engineering (CSSE) at Johns Hopkins University, we used 4 csv files to analyze the global and US COVID cases and deaths. We tidied and transformed data and joined the data set for our analysis. And we identified that the number of cases and deaths appears to be level off over time. When we did further analysis we can see that the number of COVID cases slowly increments each year, with 2023 having a major drop in cases. We also see that the prediction model does a decent job at predicting but there are some days where there are more cases or fewer deaths. There are many ways to analyze the data, and the data analysis for this dataset can go beyond more.
